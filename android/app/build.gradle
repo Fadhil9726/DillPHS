@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace 'com.example.syncxxx'
+    namespace "com.sync.xxx"
     compileSdk 34
 
     defaultConfig {
