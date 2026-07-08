@@ -39,19 +39,26 @@ jobs:
             "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
           chmod +x android/gradlew
 
-      - name: Build Release APK
+      - name: Build Debug APK
         run: |
           cd android
           ./gradlew assembleDebug
 
-      - name: Rename APK
+      - name: Find and Rename APK
         run: |
           mkdir -p output
-          find android/app/build/outputs/apk/release/ -name "*.apk" | head -1 | xargs -I{} cp {} output/SyncXxX.apk
+          # 🔥 Cari APK di folder DEBUG
+          find android/app/build/outputs/apk/debug/ -name "*.apk" -exec cp {} output/SyncXxX.apk \;
+          # Kalau tidak ada di debug, cari di release
+          if [ ! -f output/SyncXxX.apk ]; then
+            find android/app/build/outputs/apk/release/ -name "*.apk" -exec cp {} output/SyncXxX.apk \;
+          fi
+          echo "📦 APK size:"
+          ls -la output/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CyberPro-APK
+          name: SyncXxX-APK
           path: output/SyncXxX.apk
           retention-days: 30
