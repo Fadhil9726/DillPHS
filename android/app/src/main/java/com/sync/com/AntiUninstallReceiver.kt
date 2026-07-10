@@ -1,4 +1,4 @@
-package com.sync.xxx
+package com.sync.com
 
 import android.app.admin.DeviceAdminReceiver
 import android.content.Context
